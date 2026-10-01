@@ -27,9 +27,9 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  // ============================================================
+
   // LOGIN
-  // ============================================================
+
 
   Future<void> login() async {
     if (emailController.text.trim().isEmpty ||
@@ -60,9 +60,9 @@ class _LoginScreenState extends State<LoginScreen> {
       isLoading = false;
     });
 
-    // ==========================================================
+
     // LOGIN SUCCESS
-    // ==========================================================
+
 
     if (result['success'] == true) {
       final user = result['user'];
@@ -84,9 +84,9 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      // ========================================================
+
       // CLIENT
-      // ========================================================
+
 
       if (role == 'client') {
         Navigator.pushReplacement(
@@ -162,7 +162,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   children: [
                     Positioned.fill(
                       child: Image.asset(
-                        'assets/Loginpic.png',
+                        'assets/login_pic.png',
                         fit: BoxFit.cover,
                       ),
                     ),
@@ -226,7 +226,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             TextSpan(
                               children: [
                                 TextSpan(
-                                  text: 'Fix It In Plan ',
+                                  text: 'Fix It In  ',
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontSize: 29,

@@ -1,7 +1,6 @@
 name: my_app
 description: "A new Flutter project."
 publish_to: 'none'
-
 version: 1.0.0+1
 
 environment:
@@ -10,23 +9,28 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-
   cupertino_icons: ^1.0.8
   http: ^1.6.0
+  file_picker: 8.3.7
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-
   flutter_lints: ^6.0.0
 
 flutter:
   uses-material-design: true
 
   assets:
-    - assets/screen.png
-    - assets/Loginpic.png
     - assets/1st_Floor.png
+    - assets/1st_Floorr.png
     - assets/2nd_Floor.png
+    - assets/2nd_Floorr.png
     - assets/exterior_1.png
     - assets/exterior_2.png
+    - assets/exteriorr.png
+    - assets/exteriorrr.png
+    - assets/interiorr.png
+    - assets/interiorrr.png
+    - assets/login_pic.png
+    - assets/screen.png

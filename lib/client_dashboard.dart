@@ -1,4 +1,80 @@
+
+
+import 'dart:convert';
+import 'api_service.dart';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'api_service.dart';
+import 'client_designs.dart';
+import 'client_home.dart';
+import 'client_projects.dart';
+
+// API SETTINGS
+
+
+const String _base = 'http://192.168.100.12/Fix_it_in_Plans_Api';
+
+const List<String> _stages = [
+  'Assessment',
+  'Planning',
+  'Revision',
+  'Finalized',
+  'Completed',
+];
+
+Future<List<dynamic>> _get(String path, String key) async {
+  try {
+    final res = await http
+        .get(Uri.parse('$_base/$path'))
+        .timeout(const Duration(seconds: 10));
+    final d = jsonDecode(res.body);
+    if (d['success'] == true && d[key] is List) return d[key];
+  } catch (e) {
+    debugPrint('$path error: $e');
+  }
+  return [];
+}
+
+Future<Map> _post(String file, Map body) async {
+  try {
+    final res = await http
+        .post(
+      Uri.parse('$_base/$file'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    )
+        .timeout(const Duration(seconds: 15));
+    return jsonDecode(res.body) as Map;
+  } catch (e) {
+    return {'success': false, 'message': 'Error: $e'};
+  }
+}
+
+String _pick(Map m, List<String> keys, [String d = '']) {
+  for (final k in keys) {
+    final v = m[k];
+    if (v != null && v.toString().isNotEmpty) return v.toString();
+  }
+  return d;
+}
+
+int _stageIndex(Map p) {
+  final s = _pick(p, ['status']).toLowerCase();
+  return _stages.indexWhere((e) => s.contains(e.toLowerCase()));
+}
+
+double _progress(Map p) {
+  final v = double.tryParse(_pick(p, ['progress', 'progress_percent']));
+  if (v != null) return (v / 100).clamp(0.0, 1.0);
+  final i = _stageIndex(p);
+  return i < 0 ? 0 : (i + 1) / _stages.length;
+}
+
+bool _isCompleted(Map p) =>
+    _pick(p, ['status']).toLowerCase().contains('complete');
 
 class ClientDashboardScreen extends StatefulWidget {
   final int clientId;
@@ -23,9 +99,20 @@ class _ClientDashboardScreenState
     extends State<ClientDashboardScreen> {
   int selectedIndex = 0;
 
+  // DATA
+  List<dynamic> projects = [];
+  List<dynamic> documents = [];
+  List<dynamic> notifications = [];
+  bool loading = true;
+  bool projectLoading = true;
+  bool projectError = false;
+
+  // FILTERS
+  String projectFilter = 'All';
+  String docFilter = 'All';
+  String notifFilter = 'All';
 
   // COLORS
-
 
   static const Color darkGreen = Color(0xFF006B50);
   static const Color green = Color(0xFF087F5B);
@@ -34,6 +121,79 @@ class _ClientDashboardScreenState
   static const Color background = Color(0xFFF7FBF9);
   static const Color textDark = Color(0xFF173B33);
   static const Color textGray = Color(0xFF75908A);
+
+  @override
+  void initState() {
+    super.initState();
+    loadAll();
+  }
+
+  Future<void> loadAll({bool showLoader = true}) async {
+    if (showLoader && mounted) {
+      setState(() {
+        loading = true;
+        projectLoading = true;
+        projectError = false;
+      });
+    } else if (mounted) {
+      setState(() {
+        projectLoading = true;
+        projectError = false;
+      });
+    }
+
+    final id = widget.clientId;
+
+    try {
+      final projectData = await ApiService.getClientProjects(id);
+
+      if (!mounted) return;
+
+      setState(() {
+        projects = projectData;
+        projectLoading = false;
+        projectError = false;
+      });
+    } catch (e) {
+      debugPrint('client_projects.php error: $e');
+
+      if (!mounted) return;
+
+      setState(() {
+        projects = [];
+        projectLoading = false;
+        projectError = true;
+      });
+    }
+
+    try {
+      final results = await Future.wait([
+        _get('client_documents.php?client_id=$id', 'documents'),
+        _get('client_notifications.php?client_id=$id', 'notifications'),
+      ]);
+
+      if (!mounted) return;
+
+      setState(() {
+        documents = results[0];
+        notifications = results[1];
+        loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        documents = [];
+        notifications = [];
+        loading = false;
+      });
+    }
+  }
+
+  Map? get activeProject {
+    if (projects.isEmpty) return null;
+    return projects.first as Map;
+  }
 
   String get firstName {
     final name = widget.clientName.trim();
@@ -85,6 +245,7 @@ class _ClientDashboardScreenState
           setState(() {
             selectedIndex = index;
           });
+          loadAll(showLoader: false);
         },
         type: BottomNavigationBarType.fixed,
         backgroundColor: Colors.white,
@@ -124,152 +285,40 @@ class _ClientDashboardScreenState
     );
   }
 
-
   // HOME
 
-
   Widget _homePage() {
-    return SingleChildScrollView(
-      physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(
-        18,
-        14,
-        18,
-        25,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _topHeader(),
+    return ClientHomePage(
+      firstName: firstName,
+      project: activeProject,
+      notifications: notifications,
+      loading: projectLoading,
+      projectError: projectError,
+      onRefresh: loadAll,
+      onNavigateTab: (index) {
+        setState(() => selectedIndex = index);
+      },
+      onRequestRevision: _requestRevision,
+      onRequestProject: _requestProject,
+      onRetry: () => loadAll(showLoader: true),
+      onProjectTap: _openProjectDetails,
+    );
+  }
 
-          const SizedBox(height: 22),
+  void _openProjectDetails(Map p) {
+    final project = ClientProject.fromJson(
+      Map<String, dynamic>.from(p),
+    );
 
-          Text(
-            'Hello, $firstName 👋',
-            style: const TextStyle(
-              color: textDark,
-              fontSize: 25,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-
-          const SizedBox(height: 4),
-
-          const Text(
-            "Here's your project overview.",
-            style: TextStyle(
-              color: textGray,
-              fontSize: 13,
-            ),
-          ),
-
-          const SizedBox(height: 18),
-
-          _emptyProjectCard(),
-
-          const SizedBox(height: 22),
-
-          const Text(
-            'Quick Actions',
-            style: TextStyle(
-              color: textDark,
-              fontSize: 17,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-
-          const SizedBox(height: 12),
-
-          Row(
-            children: [
-              Expanded(
-                child: _quickAction(
-                  icon: Icons.image_outlined,
-                  title: 'View Designs',
-                  subtitle: 'Plans & Designs',
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const DesignsScreen(),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _quickAction(
-                  icon: Icons.description_outlined,
-                  title: 'Documents',
-                  subtitle: 'Files & Permits',
-                  onTap: () {
-                    setState(() {
-                      selectedIndex = 2;
-                    });
-                  },
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 12),
-
-          Row(
-            children: [
-              Expanded(
-                child: _quickAction(
-                  icon: Icons.edit_note,
-                  title: 'Request Revision',
-                  subtitle: 'Changes & Updates',
-                  onTap: _requestRevision,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _quickAction(
-                  icon: Icons.chat_bubble_outline,
-                  title: 'Messages',
-                  subtitle: 'Contact Team',
-                  onTap: () {
-                    setState(() {
-                      selectedIndex = 3;
-                    });
-                  },
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 25),
-
-          _sectionTitle(
-            'Project Status',
-            action: null,
-          ),
-
-          const SizedBox(height: 10),
-
-          _emptyStatusCard(),
-
-          const SizedBox(height: 22),
-
-          _sectionTitle(
-            'Recent Activity',
-            action: null,
-          ),
-
-          const SizedBox(height: 10),
-
-          _emptyActivityCard(),
-        ],
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ProjectDetailsScreen(project: project),
       ),
     );
   }
 
-
   // HEADER
-
 
   Widget _topHeader() {
     return Row(
@@ -352,11 +401,17 @@ class _ClientDashboardScreenState
     );
   }
 
+  // PROJECT CARD (walang project = "No Project Yet")
 
-  // EMPTY PROJECT CARD
+  Widget _projectCard(Map? p) {
+    final name = p == null
+        ? 'No Project Yet'
+        : _pick(p, ['project_name', 'title', 'project_type'], 'My Project');
+    final status =
+    p == null ? 'No Project' : _pick(p, ['status'], 'Ongoing');
+    final loc = p == null ? '' : _pick(p, ['location']);
+    final prog = p == null ? 0.0 : _progress(p);
 
-
-  Widget _emptyProjectCard() {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(14),
@@ -396,22 +451,21 @@ class _ClientDashboardScreenState
 
           Row(
             children: [
-              const Expanded(
+              Expanded(
                 child: Column(
-                  crossAxisAlignment:
-                  CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
+                    const Text(
                       'My Home Project',
                       style: TextStyle(
                         color: textGray,
                         fontSize: 11,
                       ),
                     ),
-                    SizedBox(height: 3),
+                    const SizedBox(height: 3),
                     Text(
-                      'No Project Yet',
-                      style: TextStyle(
+                      name,
+                      style: const TextStyle(
                         color: textDark,
                         fontSize: 17,
                         fontWeight: FontWeight.bold,
@@ -420,7 +474,6 @@ class _ClientDashboardScreenState
                   ],
                 ),
               ),
-
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 10,
@@ -428,12 +481,11 @@ class _ClientDashboardScreenState
                 ),
                 decoration: BoxDecoration(
                   color: paleGreen,
-                  borderRadius:
-                  BorderRadius.circular(20),
+                  borderRadius: BorderRadius.circular(20),
                 ),
-                child: const Text(
-                  'No Project',
-                  style: TextStyle(
+                child: Text(
+                  status,
+                  style: const TextStyle(
                     color: darkGreen,
                     fontSize: 10,
                     fontWeight: FontWeight.bold,
@@ -456,7 +508,7 @@ class _ClientDashboardScreenState
                 ),
                 const SizedBox(width: 4),
                 Text(
-                  'No location assigned',
+                  loc.isEmpty ? 'No location assigned' : loc,
                   style: TextStyle(
                     color: Colors.grey.shade500,
                     fontSize: 11,
@@ -481,7 +533,7 @@ class _ClientDashboardScreenState
                 ),
               ),
               Text(
-                '0%',
+                '${(prog * 100).round()}%',
                 style: TextStyle(
                   color: Colors.grey.shade500,
                   fontSize: 11,
@@ -495,12 +547,11 @@ class _ClientDashboardScreenState
 
           ClipRRect(
             borderRadius: BorderRadius.circular(20),
-            child: const LinearProgressIndicator(
-              value: 0,
+            child: LinearProgressIndicator(
+              value: prog,
               minHeight: 7,
-              backgroundColor: Color(0xFFE3F0EB),
-              valueColor:
-              AlwaysStoppedAnimation(lightGreen),
+              backgroundColor: const Color(0xFFE3F0EB),
+              valueColor: const AlwaysStoppedAnimation(lightGreen),
             ),
           ),
         ],
@@ -508,9 +559,7 @@ class _ClientDashboardScreenState
     );
   }
 
-
   // QUICK ACTION
-
 
   Widget _quickAction({
     required IconData icon,
@@ -545,13 +594,10 @@ class _ClientDashboardScreenState
                 size: 21,
               ),
             ),
-
             const SizedBox(width: 9),
-
             Expanded(
               child: Column(
-                crossAxisAlignment:
-                CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     title,
@@ -572,7 +618,6 @@ class _ClientDashboardScreenState
                 ],
               ),
             ),
-
             const Icon(
               Icons.chevron_right,
               color: Color(0xFF9BB5AE),
@@ -584,9 +629,7 @@ class _ClientDashboardScreenState
     );
   }
 
-
   // SECTION TITLE
-
 
   Widget _sectionTitle(
       String title, {
@@ -617,9 +660,7 @@ class _ClientDashboardScreenState
     );
   }
 
-
   // EMPTY STATUS
-
 
   Widget _emptyStatusCard() {
     return Container(
@@ -640,9 +681,7 @@ class _ClientDashboardScreenState
           _emptyIcon(
             Icons.timeline_outlined,
           ),
-
           const SizedBox(height: 12),
-
           const Text(
             'No Project Status Yet',
             style: TextStyle(
@@ -651,9 +690,7 @@ class _ClientDashboardScreenState
               fontWeight: FontWeight.bold,
             ),
           ),
-
           const SizedBox(height: 5),
-
           const Text(
             'Your project status will appear here\n'
                 'once a project is assigned.',
@@ -669,15 +706,14 @@ class _ClientDashboardScreenState
     );
   }
 
+  // STATUS CARD
 
-  // EMPTY ACTIVITY
-
-
-  Widget _emptyActivityCard() {
+  Widget _statusCard(Map p) {
+    final cur = _stageIndex(p);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(
-        vertical: 28,
+        vertical: 18,
         horizontal: 20,
       ),
       decoration: BoxDecoration(
@@ -688,33 +724,33 @@ class _ClientDashboardScreenState
         ),
       ),
       child: Column(
-        children: [
-          _emptyIcon(
-            Icons.history,
-          ),
-
-          const SizedBox(height: 12),
-
-          const Text(
-            'No Recent Activity',
-            style: TextStyle(
-              color: textDark,
-              fontSize: 15,
-              fontWeight: FontWeight.bold,
+        children: List.generate(_stages.length, (i) {
+          final done = i <= cur;
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 7),
+            child: Row(
+              children: [
+                Icon(
+                  done
+                      ? Icons.check_circle
+                      : Icons.radio_button_unchecked,
+                  color: done ? darkGreen : const Color(0xFF9BC5B8),
+                  size: 20,
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  _stages[i],
+                  style: TextStyle(
+                    color: done ? textDark : textGray,
+                    fontSize: 13,
+                    fontWeight:
+                    done ? FontWeight.bold : FontWeight.w500,
+                  ),
+                ),
+              ],
             ),
-          ),
-
-          const SizedBox(height: 5),
-
-          const Text(
-            'Updates about your project will appear here.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: textGray,
-              fontSize: 11,
-            ),
-          ),
-        ],
+          );
+        }),
       ),
     );
   }
@@ -735,307 +771,606 @@ class _ClientDashboardScreenState
     );
   }
 
+  // LIST ITEM (project / document / notification)
+
+  Widget _listItem({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    String? trailing,
+    VoidCallback? onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: const Color(0xFFDDECE7),
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: paleGreen,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: darkGreen, size: 21),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: textDark,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  if (subtitle.isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: textGray,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            if (trailing != null && trailing.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: paleGreen,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  trailing,
+                  style: const TextStyle(
+                    color: darkGreen,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _primaryButton(String text, VoidCallback onPressed) {
+    return SizedBox(
+      width: double.infinity,
+      height: 48,
+      child: ElevatedButton(
+        onPressed: onPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: darkGreen,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+        child: Text(
+          text,
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
 
   // PROJECTS PAGE
 
-
   Widget _projectsPage() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(
-        18,
-        18,
-        18,
-        25,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _pageHeader(
-            'My Projects',
-            onBack: null,
-          ),
+    final shown = projects.where((p) {
+      final m = p as Map;
+      if (projectFilter == 'Ongoing') return !_isCompleted(m);
+      if (projectFilter == 'Completed') return _isCompleted(m);
+      return true;
+    }).toList();
 
-          const SizedBox(height: 18),
-
-          Row(
-            children: [
-              _filterChip(
-                'All',
-                selected: true,
-              ),
-              _filterChip(
-                'Ongoing',
-                selected: false,
-              ),
-              _filterChip(
-                'Completed',
-                selected: false,
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 25),
-
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(
-              vertical: 35,
-              horizontal: 25,
+    return RefreshIndicator(
+      onRefresh: () => loadAll(showLoader: false),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(
+          18,
+          18,
+          18,
+          25,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _pageHeader(
+              'My Projects',
+              onBack: null,
             ),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: const Color(0xFFDDECE7),
-              ),
-            ),
-            child: Column(
+
+            const SizedBox(height: 18),
+
+            Row(
               children: [
-                _emptyIcon(
-                  Icons.home_work_outlined,
+                _filterChip(
+                  'All',
+                  selected: projectFilter == 'All',
+                  onTap: () => setState(() => projectFilter = 'All'),
                 ),
+                _filterChip(
+                  'Ongoing',
+                  selected: projectFilter == 'Ongoing',
+                  onTap: () => setState(() => projectFilter = 'Ongoing'),
+                ),
+                _filterChip(
+                  'Completed',
+                  selected: projectFilter == 'Completed',
+                  onTap: () =>
+                      setState(() => projectFilter = 'Completed'),
+                ),
+              ],
+            ),
 
-                const SizedBox(height: 15),
+            const SizedBox(height: 25),
 
-                const Text(
-                  'No Projects Yet',
-                  style: TextStyle(
-                    color: textDark,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+            if (loading)
+              const Center(child: CircularProgressIndicator())
+            else if (shown.isEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  vertical: 35,
+                  horizontal: 25,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: const Color(0xFFDDECE7),
                   ),
                 ),
-
-                const SizedBox(height: 7),
-
-                const Text(
-                  'You currently have no assigned\n'
-                      'project.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: textGray,
-                    fontSize: 12,
-                    height: 1.5,
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton(
-                    onPressed: _requestProject,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: darkGreen,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius:
-                        BorderRadius.circular(14),
-                      ),
+                child: Column(
+                  children: [
+                    _emptyIcon(
+                      Icons.home_work_outlined,
                     ),
-                    child: const Text(
-                      'Request a Project',
+                    const SizedBox(height: 15),
+                    const Text(
+                      'No Projects Yet',
                       style: TextStyle(
+                        color: textDark,
+                        fontSize: 18,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                  ),
+                    const SizedBox(height: 7),
+                    const Text(
+                      'You currently have no assigned\n'
+                          'project.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: textGray,
+                        fontSize: 12,
+                        height: 1.5,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: ElevatedButton(
+                        onPressed: _requestProject,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: darkGreen,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: const Text(
+                          'Request a Project',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
+              )
+            else ...[
+                ...shown.map((p) {
+                  final m = p as Map;
+                  return _listItem(
+                    icon: Icons.home_work_outlined,
+                    title: _pick(
+                        m, ['project_name', 'title', 'project_type'], 'Project'),
+                    subtitle: _pick(m, ['location']),
+                    trailing: _pick(m, ['status'], 'Ongoing'),
+                    onTap: () => _showProjectDetail(m),
+                  );
+                }),
+                const SizedBox(height: 6),
+                _primaryButton('Request a Project', _requestProject),
               ],
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
+  void _showProjectDetail(Map p) {
+    final cur = _stageIndex(p);
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) {
+        return Container(
+          padding: const EdgeInsets.all(20),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(28),
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _sheetHandle(),
+              Text(
+                _pick(p, ['project_name', 'title', 'project_type'],
+                    'Project'),
+                style: const TextStyle(
+                  color: textDark,
+                  fontSize: 21,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _pick(p, ['location']),
+                style: const TextStyle(
+                  color: textGray,
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(height: 14),
+              ...List.generate(_stages.length, (i) {
+                final done = i <= cur;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    children: [
+                      Icon(
+                        done
+                            ? Icons.check_circle
+                            : Icons.radio_button_unchecked,
+                        color:
+                        done ? darkGreen : const Color(0xFF9BC5B8),
+                        size: 20,
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        _stages[i],
+                        style: TextStyle(
+                          color: done ? textDark : textGray,
+                          fontSize: 13,
+                          fontWeight:
+                          done ? FontWeight.bold : FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
   // FILES
 
-
   Widget _filesPage() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(
-        18,
-        18,
-        18,
-        25,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _pageHeader(
-            'Documents',
-            onBack: null,
-          ),
+    final shown = documents.where((d) {
+      final cat = _pick(d as Map, ['category', 'type']).toLowerCase();
+      if (docFilter == 'Plans') return cat.contains('plan');
+      if (docFilter == 'Permits') return cat.contains('permit');
+      if (docFilter == 'Others') {
+        return !cat.contains('plan') && !cat.contains('permit');
+      }
+      return true;
+    }).toList();
 
-          const SizedBox(height: 18),
-
-          Row(
-            children: [
-              _filterChip(
-                'All',
-                selected: true,
-              ),
-              _filterChip(
-                'Plans',
-                selected: false,
-              ),
-              _filterChip(
-                'Permits',
-                selected: false,
-              ),
-              _filterChip(
-                'Others',
-                selected: false,
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 25),
-
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(
-              vertical: 45,
-              horizontal: 25,
+    return RefreshIndicator(
+      onRefresh: () => loadAll(showLoader: false),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(
+          18,
+          18,
+          18,
+          25,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _pageHeader(
+              'Documents',
+              onBack: null,
             ),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: const Color(0xFFDDECE7),
+
+            const SizedBox(height: 18),
+
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _filterChip(
+                    'All',
+                    selected: docFilter == 'All',
+                    onTap: () => setState(() => docFilter = 'All'),
+                  ),
+                  _filterChip(
+                    'Plans',
+                    selected: docFilter == 'Plans',
+                    onTap: () => setState(() => docFilter = 'Plans'),
+                  ),
+                  _filterChip(
+                    'Permits',
+                    selected: docFilter == 'Permits',
+                    onTap: () => setState(() => docFilter = 'Permits'),
+                  ),
+                  _filterChip(
+                    'Others',
+                    selected: docFilter == 'Others',
+                    onTap: () => setState(() => docFilter = 'Others'),
+                  ),
+                ],
               ),
             ),
-            child: Column(
-              children: [
-                _emptyIcon(
-                  Icons.folder_open_outlined,
+
+            const SizedBox(height: 25),
+
+            if (loading)
+              const Center(child: CircularProgressIndicator())
+            else if (shown.isEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  vertical: 45,
+                  horizontal: 25,
                 ),
-
-                const SizedBox(height: 15),
-
-                const Text(
-                  'No Documents Yet',
-                  style: TextStyle(
-                    color: textDark,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: const Color(0xFFDDECE7),
                   ),
                 ),
-
-                const SizedBox(height: 7),
-
-                const Text(
-                  'Authorized project documents\n'
-                      'will appear here.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: textGray,
-                    fontSize: 12,
-                    height: 1.5,
-                  ),
+                child: Column(
+                  children: [
+                    _emptyIcon(
+                      Icons.folder_open_outlined,
+                    ),
+                    const SizedBox(height: 15),
+                    const Text(
+                      'No Documents Yet',
+                      style: TextStyle(
+                        color: textDark,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 7),
+                    const Text(
+                      'Authorized project documents\n'
+                          'will appear here.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: textGray,
+                        fontSize: 12,
+                        height: 1.5,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-        ],
+              )
+            else
+              ...shown.map((d) {
+                final m = d as Map;
+                return _listItem(
+                  icon: Icons.insert_drive_file_outlined,
+                  title: _pick(m, ['title', 'file_name', 'name'], 'Document'),
+                  subtitle: _pick(m, ['created_at', 'uploaded_at']),
+                  trailing: _pick(m, ['category', 'type']),
+                );
+              }),
+
+            const SizedBox(height: 16),
+
+            _primaryButton('Upload Document', _uploadDocument),
+          ],
+        ),
       ),
     );
   }
 
+  Future<void> _uploadDocument() async {
+    final result = await FilePicker.platform.pickFiles();
+    if (result == null || result.files.single.path == null) return;
+    if (!mounted) return;
+
+    final cat = await _choose('Select Category', [
+      'Plans',
+      'Permits',
+      'Others',
+    ]);
+    if (cat == null) return;
+
+    final f = result.files.single;
+    _showMessage('Uploading...');
+
+    try {
+      final req = http.MultipartRequest(
+        'POST',
+        Uri.parse('$_base/upload_document.php'),
+      )
+        ..fields['client_id'] = '${widget.clientId}'
+        ..fields['category'] = cat
+        ..fields['title'] = f.name;
+
+      final pid = activeProject?['id'];
+      if (pid != null) req.fields['project_id'] = '$pid';
+
+      req.files.add(await http.MultipartFile.fromPath('file', f.path!));
+
+      final res = await http.Response.fromStream(await req.send());
+      final d = jsonDecode(res.body);
+
+      _showMessage(
+        d['message']?.toString() ??
+            (d['success'] == true ? 'Uploaded!' : 'Upload failed'),
+      );
+      loadAll(showLoader: false);
+    } catch (e) {
+      _showMessage('Upload error: $e');
+    }
+  }
 
   // ALERTS
 
   Widget _alertsPage() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(
-        18,
-        18,
-        18,
-        25,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _pageHeader(
-            'Notifications',
-            onBack: null,
-          ),
+    final shown = notifications.where((n) {
+      final t = _pick(n as Map, ['type', 'category']).toLowerCase();
+      if (notifFilter == 'Project') return t.contains('project');
+      if (notifFilter == 'System') return t.contains('system');
+      return true;
+    }).toList();
 
-          const SizedBox(height: 18),
-
-          Row(
-            children: [
-              _filterChip(
-                'All',
-                selected: true,
-              ),
-              _filterChip(
-                'Project',
-                selected: false,
-              ),
-              _filterChip(
-                'System',
-                selected: false,
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 25),
-
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(
-              vertical: 45,
-              horizontal: 25,
+    return RefreshIndicator(
+      onRefresh: () => loadAll(showLoader: false),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(
+          18,
+          18,
+          18,
+          25,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _pageHeader(
+              'Notifications',
+              onBack: null,
             ),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: const Color(0xFFDDECE7),
-              ),
-            ),
-            child: Column(
+
+            const SizedBox(height: 18),
+
+            Row(
               children: [
-                _emptyIcon(
-                  Icons.notifications_none,
+                _filterChip(
+                  'All',
+                  selected: notifFilter == 'All',
+                  onTap: () => setState(() => notifFilter = 'All'),
                 ),
-
-                const SizedBox(height: 15),
-
-                const Text(
-                  'No Notifications',
-                  style: TextStyle(
-                    color: textDark,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
+                _filterChip(
+                  'Project',
+                  selected: notifFilter == 'Project',
+                  onTap: () => setState(() => notifFilter = 'Project'),
                 ),
-
-                const SizedBox(height: 7),
-
-                const Text(
-                  'New project updates and messages\n'
-                      'will appear here.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: textGray,
-                    fontSize: 12,
-                    height: 1.5,
-                  ),
+                _filterChip(
+                  'System',
+                  selected: notifFilter == 'System',
+                  onTap: () => setState(() => notifFilter = 'System'),
                 ),
               ],
             ),
-          ),
-        ],
+
+            const SizedBox(height: 25),
+
+            if (loading)
+              const Center(child: CircularProgressIndicator())
+            else if (shown.isEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  vertical: 45,
+                  horizontal: 25,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: const Color(0xFFDDECE7),
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    _emptyIcon(
+                      Icons.notifications_none,
+                    ),
+                    const SizedBox(height: 15),
+                    const Text(
+                      'No Notifications',
+                      style: TextStyle(
+                        color: textDark,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 7),
+                    const Text(
+                      'New project updates and messages\n'
+                          'will appear here.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: textGray,
+                        fontSize: 12,
+                        height: 1.5,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              ...shown.map((n) {
+                final m = n as Map;
+                return _listItem(
+                  icon: Icons.notifications_active_outlined,
+                  title: _pick(m, ['title', 'message'], 'Notification'),
+                  subtitle: _pick(m, ['message', 'created_at']),
+                  trailing: _pick(m, ['type', 'category']),
+                );
+              }),
+          ],
+        ),
       ),
     );
   }
-
 
   // PROFILE
 
@@ -1187,234 +1522,349 @@ class _ClientDashboardScreenState
     );
   }
 
-
   // REQUEST PROJECT
 
-
   void _requestProject() {
+    final locationC = TextEditingController();
+    final lotC = TextEditingController();
+    String? type;
+    bool sending = false;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) {
-        return Container(
-          padding: EdgeInsets.fromLTRB(
-            20,
-            20,
-            20,
-            MediaQuery.of(context).viewInsets.bottom + 20,
-          ),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(
-              top: Radius.circular(28),
-            ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment:
-            CrossAxisAlignment.start,
-            children: [
-              _sheetHandle(),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheet) {
+            Future<void> submit() async {
+              if (type == null || locationC.text.trim().isEmpty) {
+                _showMessage(
+                  'project type location.',
+                );
+                return;
+              }
+              setSheet(() => sending = true);
 
-              const Text(
-                'Request a Project',
-                style: TextStyle(
-                  color: textDark,
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
+              final d = await _post('create_project_request.php', {
+                'client_id': widget.clientId,
+                'project_type': type,
+                'location': locationC.text.trim(),
+                'lot_size': lotC.text.trim(),
+                'preferred_service': '',
+                'description': '',
+                'target_timeline': '',
+              });
+
+              if (d['success'] == true) {
+                if (sheetContext.mounted) Navigator.pop(sheetContext);
+                _showMessage(
+                  'Project request submitted!.',
+                );
+                loadAll(showLoader: false);
+              } else {
+                if (sheetContext.mounted) {
+                  setSheet(() => sending = false);
+                }
+                _showMessage(
+                  d['message']?.toString() ?? 'Failed to submit.',
+                );
+              }
+            }
+
+            return Container(
+              padding: EdgeInsets.fromLTRB(
+                20,
+                20,
+                20,
+                MediaQuery.of(context).viewInsets.bottom + 20,
+              ),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(
+                  top: Radius.circular(28),
                 ),
               ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _sheetHandle(),
 
-              const SizedBox(height: 5),
-
-              const Text(
-                'Submit your project details to the team.',
-                style: TextStyle(
-                  color: textGray,
-                  fontSize: 12,
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              _fakeField(
-                'Project Type',
-                'Select project type',
-              ),
-
-              const SizedBox(height: 12),
-
-              _fakeField(
-                'Location',
-                'Enter project location',
-              ),
-
-              const SizedBox(height: 12),
-
-              _fakeField(
-                'Lot Size',
-                'Example: 120 sqm',
-              ),
-
-              const SizedBox(height: 20),
-
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-
-                    _showMessage(
-                      'Project request form ready.',
-                    );
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: darkGreen,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius:
-                      BorderRadius.circular(15),
+                    const Text(
+                      'Request a Project',
+                      style: TextStyle(
+                        color: textDark,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  ),
-                  child: const Text(
-                    'Continue',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
+
+                    const SizedBox(height: 5),
+
+                    const Text(
+                      'Submit your project details to the team.',
+                      style: TextStyle(
+                        color: textGray,
+                        fontSize: 12,
+                      ),
                     ),
-                  ),
+
+                    const SizedBox(height: 20),
+
+                    _selectField(
+                      'Project Type',
+                      'Select project type',
+                      type,
+                          () async {
+                        final v = await _choose('Project Type', [
+                          'House Design',
+                          'Renovation',
+                          'Interior Design',
+                          'Building Permit',
+                          'Structural Plan',
+                          'Others',
+                        ]);
+                        if (v != null) setSheet(() => type = v);
+                      },
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    _inputField(
+                      'Location',
+                      'Enter project location',
+                      locationC,
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    _inputField(
+                      'Lot Size',
+                      'Example: 120 sqm',
+                      lotC,
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton(
+                        onPressed: sending ? null : submit,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: darkGreen,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(15),
+                          ),
+                        ),
+                        child: sending
+                            ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                            : const Text(
+                          'Continue',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
   }
-
 
   // REQUEST REVISION
 
-
   void _requestRevision() {
+    final detailsC = TextEditingController();
+    String? area;
+    bool sending = false;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) {
-        return Container(
-          padding: EdgeInsets.fromLTRB(
-            20,
-            20,
-            20,
-            MediaQuery.of(context).viewInsets.bottom + 20,
-          ),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(
-              top: Radius.circular(28),
-            ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment:
-            CrossAxisAlignment.start,
-            children: [
-              _sheetHandle(),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheet) {
+            Future<void> submit() async {
+              if (area == null || detailsC.text.trim().isEmpty) {
+                _showMessage('area details.');
+                return;
+              }
+              setSheet(() => sending = true);
 
-              const Text(
-                'Request Revision',
-                style: TextStyle(
-                  color: textDark,
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
+              final d = await _post('create_revision.php', {
+                'client_id': widget.clientId,
+                'project_id': activeProject?['id'],
+                'area': area,
+                'details': detailsC.text.trim(),
+                'description': detailsC.text.trim(),
+              });
+
+              if (d['success'] == true) {
+                if (sheetContext.mounted) Navigator.pop(sheetContext);
+                _showMessage('Revision request sent to admin.');
+                loadAll(showLoader: false);
+              } else {
+                if (sheetContext.mounted) {
+                  setSheet(() => sending = false);
+                }
+                _showMessage(
+                  d['message']?.toString() ?? 'Failed to submit.',
+                );
+              }
+            }
+
+            return Container(
+              padding: EdgeInsets.fromLTRB(
+                20,
+                20,
+                20,
+                MediaQuery.of(context).viewInsets.bottom + 20,
+              ),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(
+                  top: Radius.circular(28),
                 ),
               ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _sheetHandle(),
 
-              const SizedBox(height: 5),
-
-              const Text(
-                'Tell us what changes you want to make.',
-                style: TextStyle(
-                  color: textGray,
-                  fontSize: 12,
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              _fakeField(
-                'Select Area',
-                'Choose area',
-              ),
-
-              const SizedBox(height: 12),
-
-              Container(
-                height: 120,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: background,
-                  borderRadius:
-                  BorderRadius.circular(15),
-                  border: Border.all(
-                    color: const Color(0xFFD5E8E1),
-                  ),
-                ),
-                child: const Align(
-                  alignment: Alignment.topLeft,
-                  child: Text(
-                    'Enter your revision details...',
-                    style: TextStyle(
-                      color: Color(0xFF9BB2AC),
-                      fontSize: 12,
+                    const Text(
+                      'Request Revision',
+                      style: TextStyle(
+                        color: textDark,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  ),
+
+                    const SizedBox(height: 5),
+
+                    const Text(
+                      'Tell us what changes you want to make.',
+                      style: TextStyle(
+                        color: textGray,
+                        fontSize: 12,
+                      ),
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    _selectField(
+                      'Select Area',
+                      'Choose area',
+                      area,
+                          () async {
+                        final v = await _choose('Select Area', [
+                          'Exterior',
+                          'Interior',
+                          'Floor Plan',
+                          'Materials',
+                          'Budget',
+                          'Others',
+                        ]);
+                        if (v != null) setSheet(() => area = v);
+                      },
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    Container(
+                      height: 120,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: background,
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(
+                          color: const Color(0xFFD5E8E1),
+                        ),
+                      ),
+                      child: TextField(
+                        controller: detailsC,
+                        maxLines: null,
+                        expands: true,
+                        textAlignVertical: TextAlignVertical.top,
+                        style: const TextStyle(
+                          color: textDark,
+                          fontSize: 12,
+                        ),
+                        decoration: const InputDecoration(
+                          hintText: 'Enter your revision details...',
+                          hintStyle: TextStyle(
+                            color: Color(0xFF9BB2AC),
+                            fontSize: 12,
+                          ),
+                          border: InputBorder.none,
+                          isCollapsed: true,
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton(
+                        onPressed: sending ? null : submit,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: darkGreen,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(15),
+                          ),
+                        ),
+                        child: sending
+                            ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                            : const Text(
+                          'Submit Request',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-
-              const SizedBox(height: 20),
-
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-
-                    _showMessage(
-                      'Revision request form ready.',
-                    );
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: darkGreen,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius:
-                      BorderRadius.circular(15),
-                    ),
-                  ),
-                  child: const Text(
-                    'Submit Request',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
   }
 
-
   // PERSONAL INFORMATION
-
 
   void _personalInformation() {
     showModalBottomSheet(
@@ -1480,8 +1930,7 @@ class _ClientDashboardScreenState
                     foregroundColor: Colors.white,
                     elevation: 0,
                     shape: RoundedRectangleBorder(
-                      borderRadius:
-                      BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(14),
                     ),
                   ),
                   child: const Text(
@@ -1518,8 +1967,7 @@ class _ClientDashboardScreenState
         ),
       ),
       child: Column(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             label,
@@ -1542,7 +1990,6 @@ class _ClientDashboardScreenState
     );
   }
 
-
   // HELPERS
 
   Widget _pageHeader(
@@ -1559,10 +2006,7 @@ class _ClientDashboardScreenState
               size: 18,
             ),
           ),
-
-        if (onBack == null)
-          const SizedBox(width: 2),
-
+        if (onBack == null) const SizedBox(width: 2),
         Text(
           title,
           style: const TextStyle(
@@ -1578,43 +2022,40 @@ class _ClientDashboardScreenState
   Widget _filterChip(
       String text, {
         required bool selected,
+        VoidCallback? onTap,
       }) {
-    return Container(
-      margin: const EdgeInsets.only(right: 8),
-      padding: const EdgeInsets.symmetric(
-        horizontal: 18,
-        vertical: 9,
-      ),
-      decoration: BoxDecoration(
-        color: selected
-            ? darkGreen
-            : Colors.white,
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(
-          color: selected
-              ? darkGreen
-              : const Color(0xFFDDECE7),
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(right: 8),
+        padding: const EdgeInsets.symmetric(
+          horizontal: 18,
+          vertical: 9,
         ),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: selected
-              ? Colors.white
-              : textGray,
-          fontSize: 11,
-          fontWeight:
-          selected
-              ? FontWeight.bold
-              : FontWeight.w500,
+        decoration: BoxDecoration(
+          color: selected ? darkGreen : Colors.white,
+          borderRadius: BorderRadius.circular(30),
+          border: Border.all(
+            color: selected ? darkGreen : const Color(0xFFDDECE7),
+          ),
+        ),
+        child: Text(
+          text,
+          style: TextStyle(
+            color: selected ? Colors.white : textGray,
+            fontSize: 11,
+            fontWeight: selected ? FontWeight.bold : FontWeight.w500,
+          ),
         ),
       ),
     );
   }
 
-  Widget _fakeField(
+
+  Widget _inputField(
       String label,
       String hint,
+      TextEditingController controller,
       ) {
     return Container(
       width: double.infinity,
@@ -1627,8 +2068,7 @@ class _ClientDashboardScreenState
         ),
       ),
       child: Column(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             label,
@@ -1639,26 +2079,128 @@ class _ClientDashboardScreenState
             ),
           ),
           const SizedBox(height: 6),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  hint,
-                  style: const TextStyle(
-                    color: Color(0xFF9BB2AC),
-                    fontSize: 12,
-                  ),
-                ),
+          TextField(
+            controller: controller,
+            style: const TextStyle(
+              color: textDark,
+              fontSize: 12,
+            ),
+            decoration: InputDecoration(
+              hintText: hint,
+              hintStyle: const TextStyle(
+                color: Color(0xFF9BB2AC),
+                fontSize: 12,
               ),
-              const Icon(
-                Icons.keyboard_arrow_down,
-                color: textGray,
-                size: 19,
-              ),
-            ],
+              border: InputBorder.none,
+              isCollapsed: true,
+            ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _selectField(
+      String label,
+      String hint,
+      String? value,
+      VoidCallback onTap,
+      ) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(13),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: const Color(0xFFD5E8E1),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: const TextStyle(
+                color: textDark,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    value ?? hint,
+                    style: TextStyle(
+                      color: value == null
+                          ? const Color(0xFF9BB2AC)
+                          : textDark,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                const Icon(
+                  Icons.keyboard_arrow_down,
+                  color: textGray,
+                  size: 19,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<String?> _choose(String title, List<String> options) {
+    return showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return Container(
+          padding: const EdgeInsets.all(20),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(28),
+            ),
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _sheetHandle(),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: textDark,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                for (final o in options)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(
+                      o,
+                      style: const TextStyle(
+                        color: textDark,
+                        fontSize: 14,
+                      ),
+                    ),
+                    onTap: () => Navigator.pop(sheetContext, o),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -1672,802 +2214,17 @@ class _ClientDashboardScreenState
         ),
         decoration: BoxDecoration(
           color: const Color(0xFFD7E6E1),
-          borderRadius:
-          BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(20),
         ),
       ),
     );
   }
 
   void _showMessage(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-      ),
-    );
-  }
-}
-
-
-// DESIGNS SCREEN
-
-class DesignsScreen extends StatelessWidget {
-  const DesignsScreen({super.key});
-
-  static const Color darkGreen = Color(0xFF006B50);
-  static const Color textDark = Color(0xFF173B33);
-  static const Color textGray = Color(0xFF75908A);
-  static const Color paleGreen = Color(0xFFEAF7F0);
-  static const Color background = Color(0xFFF7FBF9);
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: background,
-
-      appBar: AppBar(
-        backgroundColor: background,
-        elevation: 0,
-        foregroundColor: textDark,
-        title: const Text(
-          'Designs',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(18),
-
-        child: Column(
-          children: [
-            // =========================================
-            // FILTER CHIPS
-            // =========================================
-
-            Row(
-              children: [
-                _chip('All', true),
-                _chip('Exterior', false),
-                _chip('Interior', false),
-              ],
-            ),
-
-            const SizedBox(height: 20),
-
-            // =========================================
-            // EXTERIOR DESIGN 1
-            // =========================================
-
-            _designCard(
-              image: 'assets/exterior_1.png',
-              title: 'Modern House Exterior',
-              category: 'Exterior Design',
-            ),
-
-            const SizedBox(height: 16),
-
-            // =========================================
-            // EXTERIOR DESIGN 2
-            // =========================================
-
-            _designCard(
-              image: 'assets/exterior_2.png',
-              title: 'Contemporary House Exterior',
-              category: 'Exterior Design',
-            ),
-
-            const SizedBox(height: 20),
-
-            // =========================================
-            // FLOOR PLAN
-            // =========================================
-
-            InkWell(
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const FloorPlanScreen(),
-                  ),
-                );
-              },
-
-              borderRadius: BorderRadius.circular(18),
-
-              child: Container(
-                padding: const EdgeInsets.all(16),
-
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(18),
-
-                  border: Border.all(
-                    color: const Color(0xFFDDECE7),
-                  ),
-                ),
-
-                child: const Row(
-                  children: [
-                    Icon(
-                      Icons.architecture,
-                      color: darkGreen,
-                    ),
-
-                    SizedBox(width: 12),
-
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment:
-                        CrossAxisAlignment.start,
-
-                        children: [
-                          Text(
-                            'Floor Plan',
-                            style: TextStyle(
-                              color: textDark,
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-
-                          SizedBox(height: 3),
-
-                          Text(
-                            'View floor plan preview',
-                            style: TextStyle(
-                              color: textGray,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    Icon(
-                      Icons.chevron_right,
-                      color: textGray,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 20),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // =========================================
-  // FILTER CHIP
-  // =========================================
-
-  Widget _chip(
-      String text,
-      bool selected,
-      ) {
-    return Container(
-      margin: const EdgeInsets.only(
-        right: 8,
-      ),
-
-      padding: const EdgeInsets.symmetric(
-        horizontal: 18,
-        vertical: 9,
-      ),
-
-      decoration: BoxDecoration(
-        color: selected
-            ? darkGreen
-            : Colors.white,
-
-        borderRadius: BorderRadius.circular(30),
-
-        border: Border.all(
-          color: selected
-              ? darkGreen
-              : const Color(0xFFDDECE7),
-        ),
-      ),
-
-      child: Text(
-        text,
-
-        style: TextStyle(
-          color: selected
-              ? Colors.white
-              : textGray,
-
-          fontSize: 11,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-    );
-  }
-
-  // =========================================
-  // DESIGN CARD
-  // =========================================
-
-  Widget _designCard({
-    required String image,
-    required String title,
-    required String category,
-  }) {
-    return Container(
-      width: double.infinity,
-
-      decoration: BoxDecoration(
-        color: Colors.white,
-
-        borderRadius: BorderRadius.circular(20),
-
-        border: Border.all(
-          color: const Color(0xFFDDECE7),
-        ),
-
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-
-        children: [
-          // =====================================
-          // DESIGN IMAGE
-          // =====================================
-
-          ClipRRect(
-            borderRadius: const BorderRadius.vertical(
-              top: Radius.circular(20),
-            ),
-
-            child: Image.asset(
-              image,
-
-              width: double.infinity,
-              height: 210,
-
-              fit: BoxFit.cover,
-
-              errorBuilder: (
-                  context,
-                  error,
-                  stackTrace,
-                  ) {
-                debugPrint(
-                  'IMAGE ERROR: $image',
-                );
-
-                debugPrint(
-                  'ERROR DETAILS: $error',
-                );
-
-                return Container(
-                  width: double.infinity,
-                  height: 210,
-
-                  color: paleGreen,
-
-                  child: Column(
-                    mainAxisAlignment:
-                    MainAxisAlignment.center,
-
-                    children: [
-                      const Icon(
-                        Icons.broken_image_outlined,
-                        color: darkGreen,
-                        size: 45,
-                      ),
-
-                      const SizedBox(height: 8),
-
-                      const Text(
-                        'Image not found',
-                        style: TextStyle(
-                          color: textDark,
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-
-                      const SizedBox(height: 4),
-
-                      Text(
-                        image,
-                        style: const TextStyle(
-                          color: textGray,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-          ),
-
-          // =====================================
-          // DESIGN DETAILS
-          // =====================================
-
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              16,
-              14,
-              16,
-              16,
-            ),
-
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment:
-                    CrossAxisAlignment.start,
-
-                    children: [
-                      Text(
-                        title,
-
-                        style: const TextStyle(
-                          color: textDark,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-
-                      const SizedBox(height: 5),
-
-                      Text(
-                        category,
-
-                        style: const TextStyle(
-                          color: textGray,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 7,
-                  ),
-
-                  decoration: BoxDecoration(
-                    color: paleGreen,
-
-                    borderRadius:
-                    BorderRadius.circular(20),
-                  ),
-
-                  child: const Text(
-                    'View',
-
-                    style: TextStyle(
-                      color: darkGreen,
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-
-// =========================================
-// FLOOR PLAN SCREEN
-// =========================================
-
-class FloorPlanScreen extends StatefulWidget {
-  const FloorPlanScreen({super.key});
-
-  @override
-  State<FloorPlanScreen> createState() =>
-      _FloorPlanScreenState();
-}
-
-class _FloorPlanScreenState
-    extends State<FloorPlanScreen> {
-
-  bool firstFloor = true;
-
-  static const Color darkGreen = Color(0xFF006B50);
-  static const Color textDark = Color(0xFF173B33);
-  static const Color textGray = Color(0xFF75908A);
-  static const Color background = Color(0xFFF7FBF9);
-  static const Color paleGreen = Color(0xFFEAF7F0);
-
-  @override
-  Widget build(BuildContext context) {
-    final String imagePath = firstFloor
-        ? 'assets/1st_Floor.png'
-        : 'assets/2nd_Floor.png';
-
-    return Scaffold(
-      backgroundColor: background,
-
-      appBar: AppBar(
-        backgroundColor: background,
-        elevation: 0,
-        foregroundColor: textDark,
-
-        title: const Text(
-          'Floor Plan',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(
-          18,
-          5,
-          18,
-          30,
-        ),
-
-        child: Column(
-          children: [
-            // =====================================
-            // FLOOR BUTTONS
-            // =====================================
-
-            Row(
-              children: [
-                Expanded(
-                  child: _floorButton(
-                    '1st Floor',
-                    firstFloor,
-                        () {
-                      setState(() {
-                        firstFloor = true;
-                      });
-                    },
-                  ),
-                ),
-
-                const SizedBox(width: 10),
-
-                Expanded(
-                  child: _floorButton(
-                    '2nd Floor',
-                    !firstFloor,
-                        () {
-                      setState(() {
-                        firstFloor = false;
-                      });
-                    },
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 18),
-
-            // =====================================
-            // FLOOR PLAN IMAGE
-            // =====================================
-
-            Container(
-              width: double.infinity,
-
-              padding: const EdgeInsets.all(12),
-
-              decoration: BoxDecoration(
-                color: Colors.white,
-
-                borderRadius:
-                BorderRadius.circular(20),
-
-                border: Border.all(
-                  color: const Color(0xFFDDECE7),
-                ),
-
-                boxShadow: [
-                  BoxShadow(
-                    color:
-                    Colors.black.withOpacity(0.025),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-
-              child: ClipRRect(
-                borderRadius:
-                BorderRadius.circular(14),
-
-                child: Image.asset(
-                  imagePath,
-
-                  width: double.infinity,
-
-                  fit: BoxFit.contain,
-
-                  errorBuilder: (
-                      context,
-                      error,
-                      stackTrace,
-                      ) {
-                    return Container(
-                      height: 350,
-
-                      color: paleGreen,
-
-                      child: Center(
-                        child: Column(
-                          mainAxisAlignment:
-                          MainAxisAlignment.center,
-
-                          children: [
-                            const Icon(
-                              Icons.broken_image_outlined,
-                              color: darkGreen,
-                              size: 50,
-                            ),
-
-                            const SizedBox(height: 10),
-
-                            const Text(
-                              'Floor plan image not found',
-                              style: TextStyle(
-                                color: textDark,
-                                fontWeight:
-                                FontWeight.bold,
-                              ),
-                            ),
-
-                            const SizedBox(height: 5),
-
-                            Text(
-                              imagePath,
-                              textAlign:
-                              TextAlign.center,
-
-                              style: const TextStyle(
-                                color: textGray,
-                                fontSize: 10,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 22),
-
-            // =====================================
-            // FEATURES TITLE
-            // =====================================
-
-            Align(
-              alignment: Alignment.centerLeft,
-
-              child: Text(
-                firstFloor
-                    ? '1st Floor Features'
-                    : '2nd Floor Features',
-
-                style: const TextStyle(
-                  color: textDark,
-                  fontSize: 17,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 12),
-
-            // =====================================
-            // FEATURES
-            // =====================================
-
-            _feature(
-              '1',
-              firstFloor
-                  ? 'Living Area'
-                  : 'Master Bedroom',
-            ),
-
-            _feature(
-              '2',
-              firstFloor
-                  ? 'Dining Area'
-                  : 'Walk-in Closet',
-            ),
-
-            _feature(
-              '3',
-              firstFloor
-                  ? 'Kitchen'
-                  : 'Master Bathroom',
-            ),
-
-            _feature(
-              '4',
-              firstFloor
-                  ? 'Bedroom 1'
-                  : 'Bedroom 2',
-            ),
-
-            _feature(
-              '5',
-              firstFloor
-                  ? 'Bathroom'
-                  : 'Bedroom 3',
-            ),
-
-            _feature(
-              '6',
-              firstFloor
-                  ? 'Laundry Area'
-                  : 'Common Bathroom',
-            ),
-
-            _feature(
-              '7',
-              firstFloor
-                  ? 'Carport'
-                  : 'Balcony',
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // =========================================
-  // FLOOR BUTTON
-  // =========================================
-
-  Widget _floorButton(
-      String title,
-      bool selected,
-      VoidCallback onTap,
-      ) {
-    return GestureDetector(
-      onTap: onTap,
-
-      child: AnimatedContainer(
-        duration:
-        const Duration(milliseconds: 180),
-
-        height: 43,
-
-        decoration: BoxDecoration(
-          color: selected
-              ? darkGreen
-              : Colors.white,
-
-          borderRadius:
-          BorderRadius.circular(25),
-
-          border: Border.all(
-            color: selected
-                ? darkGreen
-                : const Color(0xFFDDECE7),
-          ),
-        ),
-
-        child: Center(
-          child: Text(
-            title,
-
-            style: TextStyle(
-              color: selected
-                  ? Colors.white
-                  : textGray,
-
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // =========================================
-  // FEATURE ITEM
-  // =========================================
-
-  Widget _feature(
-      String number,
-      String title,
-      ) {
-    return Padding(
-      padding: const EdgeInsets.only(
-        bottom: 10,
-      ),
-
-      child: Container(
-        width: double.infinity,
-
-        padding: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 10,
-        ),
-
-        decoration: BoxDecoration(
-          color: Colors.white,
-
-          borderRadius:
-          BorderRadius.circular(14),
-
-          border: Border.all(
-            color: const Color(0xFFDDECE7),
-          ),
-        ),
-
-        child: Row(
-          children: [
-            Container(
-              width: 24,
-              height: 24,
-
-              decoration: const BoxDecoration(
-                color: darkGreen,
-                shape: BoxShape.circle,
-              ),
-
-              child: Center(
-                child: Text(
-                  number,
-
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-
-            const SizedBox(width: 11),
-
-            Expanded(
-              child: Text(
-                title,
-
-                style: const TextStyle(
-                  color: textGray,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-
-            const Icon(
-              Icons.check_circle_outline,
-              color: Color(0xFF9BC5B8),
-              size: 18,
-            ),
-          ],
-        ),
       ),
     );
   }
