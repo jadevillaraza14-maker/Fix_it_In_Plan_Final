@@ -19,6 +19,7 @@ class _SignupScreenState extends State<SignupScreen> {
   bool hidePassword = true;
   bool hideConfirmPassword = true;
   bool isLoading = false;
+  bool agreeToTerms = false;
 
   @override
   void dispose() {
@@ -50,6 +51,17 @@ class _SignupScreenState extends State<SignupScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Passwords do not match.'),
+        ),
+      );
+      return;
+    }
+
+    if (!agreeToTerms) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Please agree to the Terms and Conditions.',
+          ),
         ),
       );
       return;
@@ -92,6 +104,117 @@ class _SignupScreenState extends State<SignupScreen> {
     }
   }
 
+  void showTermsAndConditions() {
+    final terms = ApiService.getTerms();
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFFF7FBF9),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Text(
+            'Terms and Conditions',
+            style: TextStyle(
+              color: Color(0xFF004437),
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: FutureBuilder<List<Map<String, dynamic>>>(
+              future: terms,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const SizedBox(
+                    height: 220,
+                    child: Center(
+                      child: CircularProgressIndicator(),
+                    ),
+                  );
+                }
+
+                if (snapshot.hasError || snapshot.data!.isEmpty) {
+                  return const SizedBox(
+                    height: 160,
+                    child: Center(
+                      child: Text(
+                        'Unable to load the terms right now. '
+                            'Please check your connection and try again.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Color(0xFF444444),
+                          fontSize: 14,
+                          height: 1.5,
+                        ),
+                      ),
+                    ),
+                  );
+                }
+
+                final clauses = snapshot.data!;
+
+                return SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'By creating an account and using Fix It In Plan, '
+                            'you agree to the following:',
+                        style: TextStyle(
+                          color: Color(0xFF333333),
+                          fontSize: 14,
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      for (var i = 0; i < clauses.length; i++) ...[
+                        Text(
+                          '${i + 1}. ${clauses[i]['title']}',
+                          style: const TextStyle(
+                            color: Color(0xFF004437),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          clauses[i]['body'].toString(),
+                          style: const TextStyle(
+                            color: Color(0xFF444444),
+                            fontSize: 14,
+                            height: 1.5,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+              },
+              child: const Text(
+                'Close',
+                style: TextStyle(
+                  color: Color(0xFF087F5B),
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -105,33 +228,7 @@ class _SignupScreenState extends State<SignupScreen> {
                 height: 220,
                 child: Stack(
                   children: [
-                    Positioned.fill(
-                      child: Image.asset(
-                        'assets/Loginpic.png',
-                        fit: BoxFit.cover,
-                      ),
-                    ),
 
-                    Positioned.fill(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Colors.transparent,
-                              const Color(0xFF004437).withOpacity(0.45),
-                              const Color(0xFF004437),
-                            ],
-                            stops: const [
-                              0.30,
-                              0.70,
-                              1.0,
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
 
                     Positioned(
                       top: 12,
@@ -322,7 +419,60 @@ class _SignupScreenState extends State<SignupScreen> {
                       ),
                     ),
 
-                    const SizedBox(height: 22),
+                    const SizedBox(height: 12),
+
+                    // =========================================
+                    // TERMS AND CONDITIONS
+                    // =========================================
+
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Checkbox(
+                          value: agreeToTerms,
+                          onChanged: (value) {
+                            setState(() {
+                              agreeToTerms = value ?? false;
+                            });
+                          },
+                          activeColor: const Color(0xFF63C47A),
+                          checkColor: const Color(0xFF004437),
+                          side: const BorderSide(
+                            color: Color(0xFFB5C8C2),
+                            width: 1.5,
+                          ),
+                        ),
+
+                        Expanded(
+                          child: Wrap(
+                            children: [
+                              const Text(
+                                'I agree to the ',
+                                style: TextStyle(
+                                  color: Color(0xFFD1DEDA),
+                                  fontSize: 13,
+                                ),
+                              ),
+                              GestureDetector(
+                                onTap: showTermsAndConditions,
+                                child: const Text(
+                                  'Terms and Conditions',
+                                  style: TextStyle(
+                                    color: Color(0xFF9BE889),
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                    decoration:
+                                    TextDecoration.underline,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 10),
 
                     SizedBox(
                       width: double.infinity,

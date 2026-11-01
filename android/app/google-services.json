@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "435644350090",
+    "project_id": "fix-it-in-plan-983df",
+    "storage_bucket": "fix-it-in-plan-983df.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:435644350090:android:386eef7d8d74c9ca8cf773",
+        "android_client_info": {
+          "package_name": "com.example.my_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBVyUXypr_WFMEUY42qL617YOXE7RlTpek"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

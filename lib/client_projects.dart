@@ -1,172 +1,6 @@
 import 'package:flutter/material.dart';
+
 import 'client_shared.dart';
-
-class ClientProject {
-  final String id;
-  final String name;
-  final String type;
-  final String location;
-  final String lotSize;
-  final String description;
-  final String status;
-  final String createdAt;
-  final double progress;
-
-  const ClientProject({
-    required this.id,
-    required this.name,
-    required this.type,
-    required this.location,
-    required this.lotSize,
-    required this.description,
-    required this.status,
-    required this.createdAt,
-    required this.progress,
-  });
-
-  factory ClientProject.fromJson(Map<String, dynamic> json) {
-    String pick(List<String> keys, [String fallback = '']) {
-      for (final key in keys) {
-        final value = json[key];
-        if (value != null && value.toString().trim().isNotEmpty) {
-          return value.toString();
-        }
-      }
-      return fallback;
-    }
-
-    final rawProgress = double.tryParse(
-      pick(['progress', 'progress_percent', 'percentage']),
-    ) ??
-        0;
-
-    return ClientProject(
-      id: pick(['id', 'project_id']),
-      name: pick(['project_name', 'name', 'title']),
-      type: pick(['project_type', 'type']),
-      location: pick(['location', 'address']),
-      lotSize: pick(['lot_size', 'lotSize', 'lot_area']),
-      description: pick(['description', 'details']),
-      status: pick(['status', 'project_status']),
-      createdAt: pick(['created_at', 'date_created', 'created_date']),
-      progress: rawProgress.clamp(0, 100).toDouble(),
-    );
-  }
-}
-
-class ProjectDetailsScreen extends StatelessWidget {
-  final ClientProject project;
-
-  const ProjectDetailsScreen({
-    super.key,
-    required this.project,
-  });
-
-  Widget _row(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 105,
-            child: Text(
-              label,
-              style: const TextStyle(
-                color: Colors.grey,
-                fontSize: 13,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value.isEmpty ? '-' : value,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: kTextDark,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: kBackground,
-      appBar: AppBar(
-        backgroundColor: kBackground,
-        elevation: 0,
-        foregroundColor: kTextDark,
-        title: const Text(
-          'Project Details',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(18, 10, 18, 30),
-        children: [
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: const Color(0xFFDDECE7),
-              ),
-            ),
-            child: Column(
-              children: [
-                _row('Project Name', project.name),
-                _row('Project Type', project.type),
-                _row('Location', project.location),
-                _row('Lot Size', project.lotSize),
-                _row('Description', project.description),
-                _row('Status', project.status),
-                _row('Created Date', project.createdAt),
-                const Divider(height: 24),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'Progress',
-                      style: TextStyle(
-                        color: kTextDark,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    Text(
-                      '${project.progress.toStringAsFixed(0)}%',
-                      style: const TextStyle(
-                        color: kDarkGreen,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 9),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(20),
-                  child: LinearProgressIndicator(
-                    value: project.progress / 100,
-                    minHeight: 8,
-                    backgroundColor: const Color(0xFFE3F0EB),
-                    valueColor:
-                    const AlwaysStoppedAnimation(kLightGreen),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 
 class ClientProjectsPage extends StatelessWidget {
   final List<dynamic> projects;
@@ -376,4 +210,187 @@ void _showProjectDetail(BuildContext context, Map p) {
       );
     },
   );
+}
+
+// ============================================================
+// PROJECT DETAILS SCREEN (bubukas kapag tinap ang My Home Project)
+// ============================================================
+
+class ProjectDetailsScreen extends StatelessWidget {
+  final Map project;
+  final double progress; // 0.0 - 1.0
+  final List<String> stages;
+  final int currentStage;
+
+  const ProjectDetailsScreen({
+    super.key,
+    required this.project,
+    required this.progress,
+    required this.stages,
+    required this.currentStage,
+  });
+
+  static const Color _dark = Color(0xFF006B50);
+  static const Color _light = Color(0xFF63C47A);
+  static const Color _pale = Color(0xFFEAF7F0);
+  static const Color _bg = Color(0xFFF7FBF9);
+  static const Color _text = Color(0xFF173B33);
+  static const Color _gray = Color(0xFF75908A);
+
+  String _v(List<String> keys, [String d = '-']) {
+    for (final k in keys) {
+      final v = project[k];
+      if (v != null && v.toString().trim().isNotEmpty) return v.toString();
+    }
+    return d;
+  }
+
+  Widget _row(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 9),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 105,
+            child: Text(
+              label,
+              style: const TextStyle(color: _gray, fontSize: 12),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                color: _text,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _bg,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        foregroundColor: _text,
+        title: const Text(
+          'Project Details',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17),
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFFDCEDE7)),
+              ),
+              child: Column(
+                children: [
+                  _row('Project Name',
+                      _v(['project_name', 'title', 'project_type'])),
+                  _row('Project Type', _v(['project_type', 'type'])),
+                  _row('Location', _v(['location', 'address'])),
+                  _row('Lot Size', _v(['lot_size', 'lotSize', 'lot_area'])),
+                  _row('Description', _v(['description', 'details'])),
+                  _row('Status', _v(['status'])),
+                  _row('Created Date',
+                      _v(['created_at', 'date_created', 'created_date'])),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFFDCEDE7)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Progress',
+                          style: TextStyle(
+                            color: _text,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '${(progress * 100).round()}%',
+                        style: const TextStyle(
+                          color: _dark,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: LinearProgressIndicator(
+                      value: progress,
+                      minHeight: 8,
+                      backgroundColor: const Color(0xFFE3F0EB),
+                      valueColor: const AlwaysStoppedAnimation(_light),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ...List.generate(stages.length, (i) {
+                    final done = i <= currentStage;
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 5),
+                      child: Row(
+                        children: [
+                          Icon(
+                            done
+                                ? Icons.check_circle
+                                : Icons.radio_button_unchecked,
+                            color: done ? _dark : const Color(0xFF9BC5B8),
+                            size: 19,
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            stages[i],
+                            style: TextStyle(
+                              color: done ? _text : _gray,
+                              fontSize: 13,
+                              fontWeight:
+                              done ? FontWeight.bold : FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

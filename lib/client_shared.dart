@@ -20,7 +20,7 @@ const Color kTextGray = Color(0xFF75908A);
 // ============================================================
 
 // Palitan kung magbago ang IP ng PC
-const String baseUrl = 'http://192.168.100.12/Fix_it_in_Plans_Api';
+const String baseUrl = 'https://steed-husband-drier.ngrok-free.dev/Fix_it_In_Plans_Api';
 
 const List<String> kStages = [
   'Assessment',

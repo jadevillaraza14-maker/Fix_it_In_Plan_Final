@@ -1,9 +1,17 @@
 import 'package:flutter/material.dart';
-import 'api_service.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
+import 'api_service.dart';
 import 'dashboard.dart';
 import 'signup.dart';
 import 'client_dashboard.dart';
+import 'remember_me.dart';
+import 'forgot_password.dart';
+
+
+
+
+
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -19,6 +27,23 @@ class _LoginScreenState extends State<LoginScreen> {
   bool hidePassword = true;
   bool rememberMe = false;
   bool isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRemembered();
+  }
+
+  // REMEMBER ME: ibalik ang naka-save na email/username
+  Future<void> _loadRemembered() async {
+    final saved = await RememberMe.load();
+    if (saved != null && mounted) {
+      setState(() {
+        emailController.text = saved;
+        rememberMe = true;
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -65,6 +90,15 @@ class _LoginScreenState extends State<LoginScreen> {
 
 
     if (result['success'] == true) {
+      // REMEMBER ME: i-save o burahin ang email/username
+      if (rememberMe) {
+        await RememberMe.save(emailController.text.trim());
+      } else {
+        await RememberMe.clear();
+      }
+
+      if (!mounted) return;
+
       final user = result['user'];
 
       final role = user['role'];
@@ -74,6 +108,30 @@ class _LoginScreenState extends State<LoginScreen> {
       // ========================================================
 
       if (role == 'admin') {
+        // GET AND SAVE ADMIN FCM TOKEN
+        try {
+          final messaging = FirebaseMessaging.instance;
+
+          final token = await messaging.getToken();
+
+          if (token != null && token.isNotEmpty) {
+            final tokenResult =
+            await ApiService.saveAdminFcmToken(
+              token: token,
+            );
+
+            print(
+              'ADMIN FCM TOKEN SAVE RESULT: $tokenResult',
+            );
+          }
+        } catch (e) {
+          print(
+            'ADMIN FCM TOKEN SAVE ERROR: $e',
+          );
+        }
+
+        if (!mounted) return;
+
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
@@ -89,19 +147,49 @@ class _LoginScreenState extends State<LoginScreen> {
 
 
       if (role == 'client') {
+        final clientId =
+            int.tryParse(
+              user['id']?.toString() ?? '0',
+            ) ??
+                0;
+
+        // GET FCM TOKEN
+        try {
+          final messaging = FirebaseMessaging.instance;
+
+          final token = await messaging.getToken();
+
+          if (token != null && token.isNotEmpty) {
+            final tokenResult =
+            await ApiService.saveFcmToken(
+              clientId: clientId,
+              token: token,
+            );
+
+            print(
+              'FCM TOKEN SAVE RESULT: $tokenResult',
+            );
+          }
+        } catch (e) {
+          print(
+            'FCM TOKEN SAVE ERROR: $e',
+          );
+        }
+
+        if (!mounted) return;
+
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
             builder: (context) => ClientDashboardScreen(
-              clientId:
-              int.tryParse(
-                user['id']?.toString() ?? '0',
-              ) ??
-                  0,
+              clientId: clientId,
+
               clientName:
               user['name']?.toString() ?? 'Client',
+
               username:
               user['username']?.toString() ?? '',
+
               email:
               user['email']?.toString() ?? '',
             ),
@@ -484,21 +572,27 @@ class _LoginScreenState extends State<LoginScreen> {
                           const Spacer(),
 
                           TextButton(
-                            onPressed: () {},
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                  const ForgotPasswordScreen(),
+                                ),
+                              );
+                            },
                             style: TextButton.styleFrom(
                               padding: EdgeInsets.zero,
                               minimumSize: Size.zero,
                               tapTargetSize:
-                              MaterialTapTargetSize
-                                  .shrinkWrap,
+                              MaterialTapTargetSize.shrinkWrap,
                             ),
                             child: const Text(
                               'Forgot Password?',
                               style: TextStyle(
                                 color: Color(0xFF9BE889),
                                 fontSize: 13,
-                                fontWeight:
-                                FontWeight.w600,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                           ),
@@ -506,6 +600,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
 
+                    const SizedBox(height: 5),
                     const SizedBox(height: 5),
 
                     // =================================================
