@@ -316,7 +316,7 @@ class _MapScreenState extends State<MapScreen> {
                 urlTemplate:
                 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName:
-                'com.example.my_app',
+                'com.fixitinplan.app',
               ),
 
               if (selectedLocation != null)
